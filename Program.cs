@@ -1,32 +1,32 @@
-﻿using System.IO;
-using System.Text;
-using System.IO.Compression;
-using static System.Console;
-using System;
-
 namespace APK2NSP
 {
+    using System;
+    using System.IO;
+    using System.IO.Compression;
+    using System.Text;
+    using static System.Console;
+
     internal struct PfsCtor
     {
-        public uint Magic;
-        public uint NumOfFiles;
-        public uint StrTableSize;
-        public uint Padding;
-        public FileEntryTable[] Entries;
-        public string[] StringTable;
+        internal uint Magic;
+        internal uint NumOfFiles;
+        internal uint StrTableSize;
+        internal uint Padding;
+        internal FileEntryTable[] Entries;
+        internal string[] StringTable;
     }
 
     internal struct FileEntryTable
     {
-        public ulong Offset;
-        public ulong Size;
-        public uint StrTableOffset;
-        public uint Padding;
+        internal ulong Offset;
+        internal ulong Size;
+        internal uint StrTableOffset;
+        internal uint Padding;
     }
 
     internal class Program
     {
-        public static void Main(string[] args)
+        internal static void Main(string[] args)
         {
             if (args.Length != 2)
             {
@@ -34,87 +34,82 @@ namespace APK2NSP
                 Environment.Exit(0);
             }
 
-            var Zip = ZipFile.OpenRead(args[0]);
+            var zip = ZipFile.OpenRead(args[0]);
 
-            var Len = Zip.Entries.Count;
+            var len = zip.Entries.Count;
 
-            var StrTable = new string[Len];
-            var EntryTable = new FileEntryTable[Len];
+            var strTable = new string[len];
 
-            ulong FileOfs = 0;
-            uint StrOfs = 0;
+            var entryTable = new FileEntryTable[len];
 
-            for (int i = 0; i < Len; i++)
+            ulong fileOfs = 0;
+            uint strOfs = 0;
+
+            for (int i = 0; i < len; i++)
             {
-                StrTable[i] = Zip.Entries[i].Name;
+                strTable[i] = zip.Entries[i].Name;
 
-                EntryTable[i] = new FileEntryTable()
+                entryTable[i] = new FileEntryTable()
                 {
-                    Offset = FileOfs,
-                    Size = (ulong)Len,
-                    StrTableOffset = StrOfs,
+                    Offset = fileOfs,
+                    Size = (ulong)len,
+                    StrTableOffset = strOfs,
                     Padding = 0
                 };
 
-                FileOfs += (ulong)Len;
-                StrOfs += (uint)StrTable[i].Length;
+                fileOfs += (ulong)len;
+                strOfs += (uint)strTable[i].Length;
             }
 
-            var Pfs = new PfsCtor()
+            var pfs = new PfsCtor()
             {
                 Magic = 0x30534650,
-                NumOfFiles = (uint)Len,
-                StrTableSize = StrOfs,
+                NumOfFiles = (uint)len,
+                StrTableSize = strOfs,
                 Padding = 0,
-                Entries = EntryTable,
-                StringTable = StrTable
+                Entries = entryTable,
+                StringTable = strTable
             };
 
-            using (var Out = File.OpenWrite(args[1]))
+            using (var output = File.OpenWrite(args[1]))
+            using (var buf = new BufferedStream(output, 0x4000))
+            using (var writer = new BinaryWriter(buf))
             {
-                using (var Buf = new BufferedStream(Out, 0x4000))
+                WriteLine("Writing header to PFS...");
+
+                writer.Write(pfs.Magic);
+                writer.Write(pfs.NumOfFiles);
+                writer.Write(pfs.StrTableSize);
+                writer.Write(pfs.Padding);
+
+                WriteLine("Writing entries to PFS...");
+
+                foreach (var entry in pfs.Entries)
                 {
-                    using (var Writer = new BinaryWriter(Buf))
+                    writer.Write(entry.Offset);
+                    writer.Write(entry.Size);
+                    writer.Write(entry.StrTableOffset);
+                    writer.Write(entry.Padding);
+                }
+
+                WriteLine("Writing string table to PFS...\n");
+
+                for (int i = 0; i < pfs.StringTable.Length; i++)
+                {
+                    writer.Write(Encoding.ASCII.GetBytes(pfs.StringTable[i]));
+                }
+
+                for (int i = 0; i < len; i++)
+                {
+                    WriteLine("Adding {0} to PFS...", pfs.StringTable[i].Trim('\0'));
+                    using (var read = zip.Entries[i].Open())
+                    using (var buf2 = new BufferedStream(read))
                     {
-                        WriteLine("Writing header to PFS...");
-
-                        Writer.Write(Pfs.Magic);
-                        Writer.Write(Pfs.NumOfFiles);
-                        Writer.Write(Pfs.StrTableSize);
-                        Writer.Write(Pfs.Padding);
-
-                        WriteLine("Writing entries to PFS...");
-
-                        foreach (var Entry in Pfs.Entries)
-                        {
-                            Writer.Write(Entry.Offset);
-                            Writer.Write(Entry.Size);
-                            Writer.Write(Entry.StrTableOffset);
-                            Writer.Write(Entry.Padding);
-                        }
-
-                        WriteLine("Writing string table to PFS...\n");
-
-                        for (int i = 0; i < Pfs.StringTable.Length; i++)
-                        {
-                            Writer.Write(Encoding.ASCII.GetBytes(Pfs.StringTable[i]));
-                        }
-
-                        for (int i = 0; i < Len; i++)
-                        {
-                            WriteLine("Adding {0} to PFS...", Pfs.StringTable[i].Trim('\0'));
-                            using (var Read = Zip.Entries[i].Open())
-                            {
-                                using (var Buf2 = new BufferedStream(Read))
-                                {
-                                    Buf2.CopyTo(Buf);
-                                }
-                            }
-                        }
-
-                        WriteLine("\nSuccessfully packed APK into an NSP!");
+                        buf2.CopyTo(buf);
                     }
                 }
+
+                WriteLine("\nSuccessfully packed APK into an NSP!");
             }
         }
     }
